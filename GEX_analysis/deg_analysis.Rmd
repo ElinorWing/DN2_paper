@@ -1,0 +1,139 @@
+---
+title: "volcano plots"
+author: "Elinor Wing"
+date: '2022-10-07'
+output: html_document
+---
+
+## Load packages and data
+
+```{r}
+library(Seurat)
+library(EnhancedVolcano)
+```
+
+```{r}
+all.merge <- readRDS("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/synovial-b-cells/harmony_new.rds")
+```
+
+## Find Markers
+
+```{r}
+dn2_volc <- FindMarkers(all.merge, ident.1 = "DN2", test.use = "MAST", only.pos = FALSE)
+write.csv(dn2_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/dn2_volc.csv", row.names = TRUE)
+
+naive1_volc <- FindMarkers(all.merge, ident.1 = "Naive 1", test.use = "MAST", only.pos = FALSE)
+write.csv(naive1_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/naive1_volc.csv", row.names = TRUE)
+
+naive2_volc <- FindMarkers(all.merge, ident.1 = "Naive 2", test.use = "MAST", only.pos = FALSE)
+write.csv(naive1_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/naive2_volc.csv", row.names = TRUE)
+
+asc1_volc <- FindMarkers(all.merge, ident.1 = "ASC 1", test.use = "MAST", only.pos = FALSE)
+write.csv(asc1_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/asc1_volc.csv", row.names = TRUE)
+
+asc2_volc <- FindMarkers(all.merge, ident.1 = "ASC 2", test.use = "MAST", only.pos = FALSE)
+write.csv(asc2_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/asc2_volc.csv", row.names = TRUE)
+
+asc3_volc <- FindMarkers(all.merge, ident.1 = "ASC 3", test.use = "MAST", only.pos = FALSE)
+write.csv(asc3_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/asc3_volc.csv", row.names = TRUE)
+
+swm_volc <- FindMarkers(all.merge, ident.1 = "Switched Memory", test.use = "MAST", only.pos = FALSE)
+write.csv(swm_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/swm_volc.csv", row.names = TRUE)
+
+earlyact_volc <- FindMarkers(all.merge, ident.1 = "Early Activation", test.use = "MAST", only.pos = FALSE)
+write.csv(earlyact_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/earlyact_volc.csv", row.names = TRUE)
+
+nswm_volc <- FindMarkers(all.merge, ident.1 = "Non-Switched Memory", test.use = "MAST", only.pos = FALSE)
+write.csv(nswm_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/nswm_volc.csv", row.names = TRUE)
+
+transitional_volc <- FindMarkers(all.merge, ident.1 = "Transitional", test.use = "MAST", only.pos = FALSE)
+write.csv(transitional_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/transitional_volc.csv", row.names = TRUE)
+
+hsp_volc <- FindMarkers(all.merge, ident.1 = "HSP+", test.use = "MAST", only.pos = FALSE)
+write.csv(hsp_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/hsp_volc.csv", row.names = TRUE)
+
+cc_volc <- FindMarkers(all.merge, ident.1 = "Cell-Cycling", test.use = "MAST", only.pos = FALSE)
+write.csv(hsp_volc, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/cc_volc.csv", row.names = TRUE)
+```
+
+
+## Plot Volcano Plots
+
+```{r, fig.height = 8, fig.width = 8}
+dn2_volcano <- EnhancedVolcano(dn2_volc,
+    lab = rownames(dn2_volc),
+    x = 'avg_log2FC',
+    y = 'p_val_adj')
+
+dn2_volcano
+```
+
+```{r}
+png("./harmony_out/dn2_vs_all_volcano.png", height = 750, width = 800)
+dn2_volcano
+dev.off()
+```
+
+
+
+## Subset to remove ASC clusters, Cell-Cycling and Transitional clusters.
+
+```{r}
+Idents(all.merge) <- "clusters"
+mature_b <- subset(all.merge, idents = c("Naive 1", "Naive 2", "HSP+", "Non-Switched Memory", "Switched Memory", "DN2", "Early Activation"))
+
+DimPlot(mature_b)
+```
+
+```{r}
+#DN2 vs all other mature B cells/non-ASCs
+dn2_vs_matureb <- FindMarkers(mature_b, ident.1 = "DN2", test.use = "MAST", only.pos = FALSE)
+write.csv(dn2_vs_matureb, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/dn2_vs_matureb.csv", row.names = TRUE)
+```
+
+```{r, fig.height = 8, fig.width = 8}
+dn2_v_mature <- EnhancedVolcano(dn2_vs_matureb,
+    lab = rownames(dn2_vs_matureb),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    drawConnectors = TRUE,
+    widthConnectors = 0.75)
+
+dn2_v_mature
+```
+
+```{r}
+pdf("dn2_v_mature.pdf", height = 10, width = 10)
+dn2_v_mature
+dev.off()
+```
+
+
+```{r}
+#HSP+ vs all other mature B cells/non-ASCs
+hsp_vs_matureb <- FindMarkers(mature_b, ident.1 = "HSP+", test.use = "MAST", only.pos = FALSE)
+write.csv(hsp_vs_matureb, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/hsp_vs_matureb.csv", row.names = TRUE)
+```
+
+```{r, fig.height = 8, fig.width = 8}
+hsp_v_mature <- EnhancedVolcano(hsp_vs_matureb,
+    lab = rownames(hsp_vs_matureb),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    drawConnectors = TRUE,
+    widthConnectors = 0.75)
+
+hsp_v_mature
+```
+
+```{r}
+pdf("./harmony_out/hsp_v_mature.pdf", height = 10, width = 10)
+hsp_v_mature
+dev.off()
+```
+
+
+
+
+
+

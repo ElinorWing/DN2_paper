@@ -1,0 +1,1406 @@
+---
+title: "Harmony"
+author: "Elinor Wing"
+date: '2022-06-15'
+output: html_document
+---
+
+```{r}
+all.merge <- readRDS("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/synovial-b-cells/harmony_new.rds")
+```
+
+## Load packages and Data
+
+```{r}
+library(Seurat)
+library(harmony)
+library(clustree)
+library(cowplot)
+library(patchwork)
+library(ggplot2)
+library(dplyr)
+library(EnhancedVolcano)
+```
+
+
+```{r}
+#load the data - .rds files from each sample after QC
+sample1 <- readRDS("./EW1-out/EW.1_final.rds")
+sample2 <- readRDS("./EW1-out/EW.2_final.rds")
+sample3 <- readRDS("./EW3-out/EW.3_final.rds")
+```
+
+```{r}
+sample1@meta.data[["orig.ident"]] <- "sample1"
+sample2@meta.data[["orig.ident"]] <- "sample2"
+sample3@meta.data[["orig.ident"]] <- "sample3"
+```
+
+## Merge samples
+
+```{r}
+#merge the 3 samples
+all.merge <- merge(sample1, y = c(sample2, sample3), add.cell.ids = c("1", "2", "3"), merge.data = TRUE)
+all.merge
+```
+
+```{r}
+all.merge <- ScaleData(all.merge, verbose = FALSE)
+```
+
+```{r}
+all.merge <- FindVariableFeatures(all.merge, selection.method = "vst", nfeatures = 2000)
+head(VariableFeatures(all.merge))
+```
+
+```{r}
+igtcr.index <- grep(pattern = "IG[HKL][VDJ]|AC233755.1|IGH[GMDEA]|IGKC|IGLC|IGLL|TR[ABGD][CV]", x = VariableFeatures(all.merge), value = FALSE) # Select row indices for Ig VDJ genes, Ig constant genes, and TCR genes 
+
+VariableFeatures(all.merge) <- VariableFeatures(all.merge)[-igtcr.index]
+```
+
+
+```{r}
+all.merge <- RunPCA(all.merge, npcs = 30)
+```
+
+## Run Harmony
+
+```{r}
+#run harmony on the merged samples
+options(repr.plot.height = 2.5, repr.plot.width = 6)
+all.merge <- all.merge %>% 
+    RunHarmony("orig.ident", plot_convergence = TRUE)
+```
+
+```{r}
+harmony_embeddings <- Embeddings(all.merge, 'harmony')
+harmony_embeddings[1:5, 1:5]
+```
+
+
+```{r}
+saveRDS(all.merge, "samples_integrated_harmony.rds")
+```
+
+
+## Clustring and Dimensionality Reduction
+
+```{r}
+all.merge <- all.merge %>% 
+    RunUMAP(reduction = "harmony", dims = 1:20) %>% 
+    FindNeighbors(reduction = "harmony", dims = 1:20) %>% 
+    FindClusters(resolution = 0.5) %>% 
+    identity()
+```
+
+```{r}
+DimPlot(all.merge, reduction = "umap", group.by = "orig.ident", pt.size = .1, split.by = 'orig.ident')
+```
+
+```{r, fig.width = 15, fig.height = 9}
+p1 <- DimPlot(all.merge, reduction = "umap", group.by = "orig.ident")
+p2 <- DimPlot(all.merge, reduction = "umap", label = TRUE,
+    repel = TRUE)
+p1 + p2
+```
+
+```{r}
+for(x in seq(0, 1.4, by=0.2)){
+    all.merge <- FindClusters(all.merge, resolution = x)
+}
+```
+
+```{r, fig.width = 8, fig.height = 14}
+cluster_tree <- clustree(all.merge, prefix = "RNA_snn_res.")
+
+cluster_tree
+```
+
+```{r, fig.width = 10, fig.height = 10}
+Idents(all.merge) <- "RNA_snn_res.0.8"
+p_cluster <- DimPlot(all.merge, reduction = "umap", label = TRUE, pt.size = .1) + ggtitle("Seurat Clusters")
+p_cluster 
+```
+
+
+```{r, fig.width = 10, fig.height = 10}
+Idents(all.merge) <- "RNA_snn_res.0.6"
+p_cluster0.6 <- DimPlot(all.merge, reduction = "umap", label = TRUE, pt.size = .1) + ggtitle("Seurat Clusters")
+p_cluster0.6 
+```
+
+
+
+## CLuster Identification
+
+
+```{r, fig.width=20}
+FeaturePlot(all.merge, features = c("CD19", "MS4A1", "JCHAIN", "CD27", "IGHD", "IGHM", "IGHG1", "IGHA1", "CR2", "FCER2", "ITGAX", "MME"), label.size = 4, repel = T, label = F, cols = c("beige", "brown"))  #+ scale_colour_gradientn(colours = c("blue", "red")) 
+```
+
+```{r}
+pdf("supp_expression_umap.pdf", width = 20, height = 13)
+FeaturePlot(all.merge, features = c("CD19", "MS4A1", "JCHAIN", "CD27", "IGHD", "IGHM", "IGHG1", "IGHA1", "CR2", "FCER2", "ITGAX", "MME"), label.size = 4, repel = T, label = F, cols = rev(brewer.pal(n = 11, name = "RdBu")))
+dev.off()
+```
+
+```{r, fig.width=20}
+FeaturePlot(all.merge, features = c("ITGAX", "FCRL5", "SOX5", "GAS7", "ITGAM", "CD19", "CD86","CD80", "ZEB2", "HLA-DQA2", "HLA-DQB1", "HLA-DRB1"), label.size = 4, repel = T, label = F) & theme(plot.title = element_text(size=10))
+```
+
+#gene sets from:
+#https://www.gsea-msigdb.org/gsea/msigdb/genesets.jsp
+
+```{r}
+#plasma cells versus memory B cells - upregulated genes
+#load the json file with the gene set
+library("rjson")
+pc_vs_mem_up <- rjson::fromJSON(file ="/Users/elinorwing/Downloads/GSE12366_PLASMA_CELL_VS_MEMORY_BCELL_UP.v7.5.1.json")
+
+#the list of genes is stored under geneSymbols
+#create new list
+pc_vs_mem_up_gl <- pc_vs_mem_up[["GSE12366_PLASMA_CELL_VS_MEMORY_BCELL_UP"]][["geneSymbols"]]
+```
+
+```{r}
+#add a module score column to the meta data based on the gene set
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = list(pc_vs_mem_up_gl),
+  name = 'pc_mem_up',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+
+
+```{r}
+#gc vs plasma cell - upregulated
+#load the json file with the gene set
+gc_vs_pc_up <- rjson::fromJSON(file ="/Users/elinorwing/Downloads/GSE12366_GC_BCELL_VS_PLASMA_CELL_UP.v7.5.1.json")
+
+#the list of genes is stored under geneSymbols
+#create new list
+gc_vs_pc_up_gl <- gc_vs_pc_up[["GSE12366_GC_BCELL_VS_PLASMA_CELL_UP"]][["geneSymbols"]]
+```
+
+
+```{r}
+#add a module score column to the meta data based on the gene set
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = list(gc_vs_pc_up_gl),
+  name = 'gc_pc_up',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+```{r}
+FeaturePlot(all.merge, features = "gc_pc_up1", label.size = 4, repel = T, label = F) & theme(plot.title = element_text(size=10))
+```
+
+
+
+```{r}
+#naive versus memory B cells - upregulated genes
+#load the json file with the gene set
+naive_vs_mem_up <- rjson::fromJSON(file ="/Users/elinorwing/Downloads/GSE12366_NAIVE_VS_MEMORY_BCELL_UP.v7.5.1.json")
+
+#the list of genes is stored under geneSymbols
+#create new list
+naive_vs_mem_up_gl <- naive_vs_mem_up[["GSE12366_NAIVE_VS_MEMORY_BCELL_UP"]][["geneSymbols"]]
+```
+
+```{r}
+#add a module score column to the meta data based on the gene set
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = list(naive_vs_mem_up_gl),
+  name = 'naive_mem_up',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+```{r}
+data <- Embeddings(object = all.merge[["umap"]])[(colnames(all.merge)), c(1, 2)]
+data <- as.data.frame(data)
+data$naive <- all.merge@meta.data$naive_mem_up1
+
+data <- data[data$naive > 0.07, ]
+```
+
+```{r}
+plot <- FeaturePlot(all.merge, features = "naive_mem_up1", label.size = 4, repel = T, label = F) + 
+  theme(plot.title = element_text(size=10)) 
+ 
+plot + scale_colour_gradientn(colours = c("beige", "brown")) 
+  #stat_density2d(data=data, aes(x=UMAP_1, y= UMAP_2, z=naive))
+```
+
+```{r}
+data2 <- Embeddings(object = all.merge[["umap"]])[(colnames(all.merge)), c(1, 2)]
+data2 <- as.data.frame(data2)
+data2$pc <- all.merge@meta.data$pc_mem_up1
+
+data2 <- data2[data2$pc > 0.06, ]
+```
+
+```{r}
+plot2 <- FeaturePlot(all.merge, features = "pc_mem_up1", label.size = 4, repel = T, label = F) + 
+  theme(plot.title = element_text(size=10)) 
+ 
+plot2 + scale_colour_gradientn(colours = c("beige", "brown")) 
+  #stat_density2d(data=data2, aes(x=UMAP_1, y= UMAP_2, z=pc))
+```
+
+```{r}
+#early vs late GC B cell - upregulated genes
+#load the json file with the gene set
+library("rjson")
+switched_mem <- rjson::fromJSON(file ="/Users/elinorwing/Downloads/GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP.v7.5.1.json")
+
+#the list of genes is stored under geneSymbols
+#create new list
+switched_mem <- switched_mem[["GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP"]][["geneSymbols"]]
+```
+
+
+```{r}
+#add a module score column to the meta data based on the gene set
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = list(switched_mem),
+  name = 'switched_mem',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+```{r}
+data3 <- Embeddings(object = all.merge[["umap"]])[(colnames(all.merge)), c(1, 2)]
+data3 <- as.data.frame(data3)
+data3$swm <- all.merge@meta.data$switched_mem1
+
+data3 <- data3[data3$swm > 0.05, ]
+```
+
+```{r}
+plot3 <- FeaturePlot(all.merge, features = "switched_mem1", label.size = 4, repel = T, label = F) + 
+  theme(plot.title = element_text(size=10)) 
+ 
+plot3 + scale_colour_gradientn(colours = c("beige", "brown")) 
+  #stat_density2d(data=data3, aes(x=UMAP_1, y= UMAP_2, z=swm))
+```
+
+
+
+## Comparison with SLE DN2 B cells and mouse equivalent CD21lo CD23lo
+
+```{r}
+#add a module score column to the meta data based on the significant genes with >1.5 log2FC
+DN2vsOther_up <- read_csv("~/Documents/Edinburgh/Year 2/RNAseq/tables/DN2vsOther_up.csv")
+DN2vsOther_up <- subset(DN2vsOther_up, log2FoldChange > 1.5)
+dn2_gl <- list(DN2vsOther_up$Id)
+
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = dn2_gl,
+  name = 'DN2',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+```{r}
+data4 <- Embeddings(object = all.merge[["umap"]])[(colnames(all.merge)), c(1, 2)]
+data4 <- as.data.frame(data4)
+data4$dn2 <- all.merge@meta.data$DN21
+
+quantile(data4$dn2, probs = 0.9)
+
+data5 <- data4[data4$dn2 > 0.006257201 , ]
+```
+
+```{r}
+plot4 <- FeaturePlot(all.merge, features = "DN21", label.size = 4, repel = T, label = F) + 
+  theme(plot.title = element_text(size=10)) 
+
+plot4 + scale_colour_gradientn(colours = c("beige", "brown")) +
+  stat_density2d(data=data5, aes(x=UMAP_1, y= UMAP_2, z=dn2), colour="black")
+```
+
+```{r}
+pdf("jenks_dn2_gs_umap.pdf", width=6.5, height=5.5)
+plot4 + scale_colour_gradientn(colours = c("beige", "brown")) +
+  stat_density2d(data=data5, aes(x=UMAP_1, y= UMAP_2, z=dn2), colour="black")
+dev.off()
+```
+
+
+
+```{r}
+#add a module score column to the meta data based on the significant genes with >2.5 log2FC
+farquhar_up <- read_csv("~/Documents/Edinburgh/Year 2/DN2 Paper/FOB vs CD23 low ALL_topTable_sorted 210220.csv")
+farquhar_up$gene <- toupper(farquhar_up$gene)
+faquhar_up <- subset(farquhar_up, logFC < -2.5)
+Farquhar <- list(faquhar_up$gene)
+
+#add a module score column to the meta data 
+all.merge <- AddModuleScore(
+  object = all.merge,
+  features = Farquhar,
+  name = 'Farquhar',
+  replace = TRUE,
+  assay = "RNA")
+```
+
+```{r}
+data1 <- Embeddings(object = all.merge[["umap"]])[(colnames(all.merge)), c(1, 2)]
+data1 <- as.data.frame(data1)
+data1$farquhar <- all.merge@meta.data$Farquhar1
+
+quantile(data1$farquhar, probs = 0.9)
+```
+
+```{r}
+data1 <- data1[data1$farquhar > 0.04601295 , ]
+```
+
+```{r}
+plot <- FeaturePlot(all.merge, features = "Farquhar1", label.size = 4, repel = T, label = F, cols = c("beige", "brown")) + 
+  theme(plot.title = element_text(size=10)) 
+ 
+plot + stat_density2d(data=data1, aes(x=UMAP_1, y= UMAP_2, z=farquhar), colour="black")
+```
+
+```{r}
+pdf("farquar_dn2_gs_umap.pdf", width=6.5, height=5.5)
+plot + stat_density2d(data=data1, aes(x=UMAP_1, y= UMAP_2, z=farquhar), colour="black")
+dev.off()
+```
+
+
+Identify clusters with reference data.
+
+```{r}
+library(celldex)
+library(SingleR)
+```
+
+```{r}
+monaco.ref <- celldex::MonacoImmuneData()
+```
+
+```{r}
+all.merge.raw <- GetAssayData(all.merge, slot = "counts") #use raw count data as recommended, understand why
+monaco.all.merged <- SingleR(test = all.merge.raw, ref = monaco.ref, assay.type.test=1,
+    labels = monaco.ref$label.fine)
+```
+
+```{r}
+table(monaco.all.merged$labels)
+```
+
+```{r}
+plotScoreHeatmap(monaco.all.merged)
+```
+
+
+```{r}
+all.merge[["SingleR.labels"]] <- monaco.all.merged$labels
+```
+
+```{r}
+monaco.high.all.merge <- SingleR(test = all.merge.raw, ref = monaco.ref, assay.type.test=1,
+    labels = monaco.ref$label.main)
+
+table(monaco.high.all.merge$labels)
+```
+
+```{r}
+all.merge[["SingleR.high.labels"]] <- monaco.high.all.merge$labels
+```
+
+```{r}
+Idents(all.merge) <- "SingleR.high.labels"
+
+p_monaco_main <- DimPlot(all.merge, reduction = "umap", label = FALSE)
+p_monaco_main
+```
+
+```{r}
+Idents(all.merge) <- "SingleR.labels"
+
+p_monaco_fine <- DimPlot(all.merge, reduction = "umap", label = FALSE, cols = c('#56b4e9', '#e69f00',  '#009e73', '#d55e00', '#cc79a7', 'black', 'black', 'black', 'black', 'black', 'black', 'black')) + ggtitle("SingleR Labels")
+p_monaco_fine
+```
+
+```{r}
+pdf("singler_labels.pdf", width=7.5, height=5.5)
+p_monaco_fine
+dev.off()
+```
+
+```{r}
+pdf("p_monaco_fine.pdf", width = 8, height = 5)
+p_monaco_fine
+dev.off()
+```
+
+
+
+#Rename clusters
+
+```{r, fig.width = 16, fig.height = 9}
+Idents(all.merge) <- "RNA_snn_res.0.8"
+
+all.merge <- RenameIdents(all.merge, `0` = "Non-Switched Memory", `1` = "Naive 2", `2` = "ASC 2", `3` = "Switched Memory", `4` = "Naive 2", `5` = "DN2", `6` = "HSP+", `7` = "ASC 3", `8` = "Naive 1", `9` = "ASC 2", `10` = "Early Activation", `11` = "Transitional", `12` = "ASC 1", `13` = "Cell-Cycling")
+
+p1 <- DimPlot(all.merge, reduction = "umap", group.by = "orig.ident") + ggtitle("Sample")
+p3 <- DimPlot(all.merge, reduction = "umap", label = TRUE,
+    repel = TRUE)
+p1 + p3
+```
+
+```{r, fig.width = 15, fig.height = 7}
+split1 <- DimPlot(all.merge, label.size = 4, repel = T, label = F, split.by = "orig.ident") & theme(plot.title = element_text(size=10))
+split1
+```
+
+
+
+#Find markers
+
+```{r}
+markers <- FindAllMarkers(all.merge, test.use = "MAST")
+```
+
+```{r}
+write.csv(markers, "all_merged_markers.csv")
+```
+
+
+```{r}
+top20markers <- markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 20, order_by = avg_log2FC)
+top20markers
+```
+
+```{r}
+write.csv(top20markers, "./harmony_out/top20markers.csv")
+```
+
+
+#Plotting
+
+```{r, fig.height=15, fig.width=16}
+heatmap1 <- markers %>%
+      group_by(cluster) %>%
+      top_n(n = 5, wt = avg_log2FC) -> top5
+  DoHeatmap(all.merge, features = top5$gene) + NoLegend()
+  
+heatmap1
+```
+
+```{r, fig.height = 8, fig.width = 12}
+library(oneclust)
+Idents(all.merge) <- "RNA_snn_res.0.8"
+
+all.merge <- RenameIdents(all.merge, `0` = "Non-Switched Memory", `1` = "Naive 2", `2` = "ASC 2", `3` = "Switched Memory", `4` = "Naive 2", `5` = "DN2", `6` = "HSP+", `7` = "ASC 3", `8` = "Naive 1", `9` = "ASC 2", `10` = "Early Activation", `11` = "Transitional", `12` = "ASC 1", `13` = "Cell-Cycling")
+
+labelled_umap <- DimPlot(all.merge, label = TRUE, label.size = 4, label.box = FALSE, repel = TRUE) + ggtitle("Seurat Clusters")
+labelled_umap
+```
+
+```{r}
+pdf("./figures/labelled_umap_nobox.pdf", width = 8.5, height = 5.5)
+labelled_umap
+dev.off()
+```
+
+
+```{r, fig.width = 12, fig.height = 5}
+all.merge <- RenameIdents(all.merge, 'Non-Switched Memory' = "Non-Switched Mem", 'Switched Memory' = "Switched Mem 1")
+
+all.merge@active.ident <- factor(all.merge@active.ident, 
+                            levels=c("Cell-Cycling","ASC 3", "ASC 2", "ASC 1", "DN2", "Early Activation", "HSP+", "Switched Mem 1", "Non-Switched Mem", "Naive 2", "Naive 1", "Transitional"))
+
+labelled <- DotPlot(all.merge, features = c("CD19", "MS4A1","MME", "CD83", "BACH2", "FCER2", "IGHD", "CD27", "CD24", "CD69", "IRF4", "HSPA1A", "HSPA6", "HSPA1B", "SOX5", "ITGAX", "FCRL5", "ZEB2", "CD86", "CD80", "CD38", "PRDM1", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHM", "IGHA1", "JCHAIN", "NEAT1","MKI67", "NUSAP1"), cols = "RdYlBu", col.min = -1, col.max = 2.5, scale.min=0.5) + RotatedAxis() + 
+  theme(text = element_text(size = 15), axis.text.y = element_text(angle=45)) 
+
+labelled
+```
+
+```{r}
+pdf("./figures/labelled_dotplot3.pdf", width = 12, height = 5)
+labelled 
+dev.off()
+```
+
+```{r, fig.height = 20}
+all.merge@active.ident <- factor(all.merge@active.ident, 
+                            levels=c("Cell-Cycling","ASC 3", "ASC 2", "ASC 1", "DN2", "Early Activation", "HSP+", "Switched Memory", "Non-Switched Memory", "Naive 1", "Naive 2", "Transitional"))
+
+VlnPlot(all.merge, features = c("BACH2", "DOCK8", "FCER2", "LY9", "S100A10", "HOPX", "HSPA1A", "HSPA1B", "IRF4", "EGR1", "SOX5", "ITGAX", "FCRL5", "ZEB2", "PRDM1", "IGHG1", "IGHM", "IGHA1", "IGHD", "NUSAP1", "CD24"), pt.size = 0)
+```
+
+#Save 
+
+```{r}
+saveRDS(all.merge, file = "./harmony_new.rds")
+```
+
+```{r}
+all.merge <- readRDS("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/synovial-b-cells/harmony_new.rds")
+```
+
+```{r}
+write.csv(all.merge[[]], "gex_cluster_annotate.csv")
+```
+
+
+```{r}
+#save h5ad file for scVelo
+library(SeuratDisk)
+
+SaveH5Seurat(with_bcr, filename = "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/bcr/NEW BCR/clones/trees/annotated_umap/with_bcr.h5Seurat")
+Convert("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/bcr/NEW BCR/clones/trees/annotated_umap/with_bcr.h5Seurat", dest = "h5ad")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+Idents(all.merge) <- "RNA_snn_res.0.2"
+
+DimPlot(all.merge, reduction = "umap", label = FALSE)
+```
+
+```{r, fig.width = 18, fig.height = 10}
+mapal <- colorRampPalette(RColorBrewer::brewer.pal(11,"RdBu"))(256)
+
+all_merged_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 5, wt = avg_log2FC) -> top5
+
+top5 %>% arrange(factor(cluster, levels = c("Cell-Cycling","ASC 3", "ASC 2", "ASC 1", "DN2", "Early Activation", "HSP+", "Switched Memory", "Non-Switched Memory", "Naive 2", "Naive 1", "Transitional"))) -> top5
+
+levels(all.merge) <- c("Cell-Cycling","ASC 3", "ASC 2", "ASC 1", "DN2", "Early Activation", "HSP+", "Switched Memory", "Non-Switched Memory", "Naive 2", "Naive 1", "Transitional")
+
+new_heatmap <- DoHeatmap(all.merge,
+          features = top5$gene,
+          size = 3)+
+  scale_fill_gradientn(colours = rev(mapal)) 
+
+new_heatmap
+```
+
+```{r}
+png("./figures/heatmap.png", width = 1500, height = 900)
+new_heatmap
+dev.off()
+```
+
+```{r, fig.height = 20}
+all.merge@active.ident <- factor(all.merge@active.ident, 
+                            levels=c("Cell-Cycling","ASC 3", "ASC 2", "ASC 1", "DN2", "Early Activation", "HSP+", "Switched Memory", "Non-Switched Memory", "Naive 2", "Naive 1", "Transitional"))
+
+
+library(cowplot)
+violin <- plot_grid(VlnPlot(all.merge, features = c("MS4A1"), pt.size = 0) + theme(axis.text.x = element_text(angle = 90,  hjust=1)),
+          VlnPlot(all.merge, features = c("JCHAIN"), pt.size = 0) + theme(axis.text.x = element_text(angle = 90,  hjust=1)),
+          VlnPlot(all.merge, features = c("ITGAX"), pt.size = 0) + theme(axis.text.x = element_text(angle = 90,  hjust=1)),
+          VlnPlot(all.merge, features = c("IGHG1"), pt.size = 0) + theme(axis.text.x = element_text(angle = 90,  hjust=1)))
+
+          
+violin         
+```
+
+
+
+```{r, fig.width=8, fig.height=5}
+v_factor_levels <- c("Non-Switched Memory", "Naive 2", "ASC 2", "Switched Memory", "DN2", "HSP+", "ASC 3", "Naive 1", "Early Activation", "Transitional", "ASC 1", "Cell-Cycling" )
+ggplot(all.merge@meta.data, aes(x=orig.ident, fill=factor(clusters, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Cluster Distribution") + 
+    xlab("Sample") + ylab("Proportion") 
+```
+
+```{r}
+pdf("./figures/stacked_barplot_clusters.pdf", width=8, height=5)
+ggplot(all.merge@meta.data, aes(x=orig.ident, fill=factor(clusters, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Cluster Distribution") + 
+    xlab("Sample") + ylab("Proportion") 
+dev.off()
+```
+
+
+```{r, fig.width=8, fig.height=5}
+v_factor_levels <- c("IGHM", "IGHD", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4")
+ggplot(with_bcr@meta.data, aes(x=orig.ident, fill=factor(heavy_c_call, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Isotype Distribution") + 
+    xlab("Sample") + ylab("Proportion") 
+```
+
+```{r}
+pdf("./figures/stacked_barplot_ig.pdf", width=8, height=5)
+ggplot(with_bcr@meta.data, aes(x=orig.ident, fill=factor(heavy_c_call, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Isotype Distribution") + 
+    xlab("Sample") + ylab("Proportion") 
+dev.off()
+```
+
+```{r}
+cell_id <- data.frame(all.merge@assays[["RNA"]]@counts@Dimnames[[2]])
+colnames(cell_id) <- c('sequence_id')
+
+final_df <- merge(x = cell_id, y = result,  by = c('sequence_id'), all.x = TRUE)
+final_df <- data.frame(final_df[,-1], row.names = final_df[,1])
+
+
+all.merge <- AddMetaData(all.merge, final_df, 'clone_id')
+```
+
+
+```{r}
+metadata <- all.merge@meta.data
+
+head(metadata)
+```
+```{r}
+metadata <- transform(metadata, count = ave(clone_id, clone_id, FUN = length))
+
+metadata$count <- as.numeric(metadata$count)
+```
+
+
+```{r}
+metadata$clone_size <- NA
+
+for (i in 1:length(metadata$count)){
+  if(is.na(metadata$count[i])){
+  metadata$clone_size[i] <- paste0(NA)
+  } else if(metadata$count[i] >= 20){
+  metadata$clone_size[i] <- paste0('>20')
+  } else if(metadata$count[i] >= 15 & metadata$count[i] < 20){
+  metadata$clone_size[i] <- paste0('15-20')
+  } else if(metadata$count[i] >= 10 & metadata$count[i] < 15){
+  metadata$clone_size[i] <- paste0('10-15')
+  } else if(metadata$count[i] >= 5 & metadata$count[i] < 10){
+  metadata$clone_size[i] <- paste0('5-10')
+  } else if(metadata$count[i] >= 2 & metadata$count[i] < 5){
+  metadata$clone_size[i] <- paste0('2-5')
+  } else if(metadata$count[i] == 1){
+  metadata$clone_size[i] <- paste0('1')
+  }else { paste0(NA)}}
+```
+
+
+```{r, fig.width=8, fig.height=5}
+v_factor_levels <- c(">20", "15-20", "10-15","5-10", "2-5", "1")
+ggplot(metadata, aes(x=clusters, fill=factor(clone_size, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Isotype Distribution") + 
+    xlab("Sample") + ylab("Proportion") 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+Idents(with_bcr) <- "heavy_mut_rate"
+
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c(">15%", "10-15%", "5-10%","1-5%", "<1%", "Germline"))
+
+DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size = 0.3, cols = c('#56b4e9', '#e69f00',  '#009e73', '#d55e00', '#cc79a7')) + ggtitle("Mutation Frequency (Heavy Chain)")
+```
+
+
+
+
+```{r}
+Idents(with_bcr) <- "heavy_c_call"
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c("IGHM", "IGHD", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4"))
+
+p_c_call_bcr <- DimPlot(with_bcr, reduction = "umap", label = FALSE)
+p_c_call_bcr
+```
+
+```{r}
+pdf("./figures/umap_ig.pdf", width=8.5, height=5.5)
+p_c_call_bcr
+dev.off()
+```
+
+
+
+
+'heavy_sequence_id','heavy_sequence','heavy_rev_comp','heavy_productive','heavy_v_call','heavy_d_call','heavy_j_call','heavy_sequence_alignment','heavy_germline_alignment','heavy_junction',
+                    'heavy_junction_aa','heavy_v_cigar','heavy_d_cigar','heavy_j_cigar','heavy_stop_codon','heavy_vj_in_frame','heavy_locus','heavy_junction_length','heavy_np1_length','heavy_np2_length',
+                    'heavy_v_sequence_start','heavy_v_sequence_end','heavy_v_germline_start','heavy_v_germline_end','heavy_d_sequence_start','heavy_d_sequence_end','heavy_d_germline_start',
+                    'heavy_d_germline_end','heavy_j_sequence_start','heavy_j_sequence_end','heavy_j_germline_start','heavy_j_germline_end','heavy_v_score','heavy_v_identity','heavy_v_support',
+                    'heavy_d_score','heavy_d_identity','heavy_d_support','heavy_j_score','heavy_j_identity','heavy_j_support','heavy_fwr1','heavy_fwr2','heavy_fwr3','heavy_fwr4','heavy_cdr1',
+                    'heavy_cdr2','heavy_cdr3','heavy_cell_id','heavy_c_call','heavy_consensus_count','heavy_umi_count','heavy_v_call_10x','heavy_d_call_10x','heavy_j_call_10x','heavy_junction_10x',
+                    'heavy_junction_10x_aa','heavy_sample','heavy_contig','heavy_chain','heavy_v_gene','heavy_d_gene','heavy_j_gene','heavy_v_family','heavy_mut_count_v','heavy_mut_freq_v',
+
+```{r}
+cols_to_remove <- c('heavy_sequence_id','heavy_sequence','heavy_rev_comp','heavy_productive','heavy_v_call','heavy_d_call','heavy_j_call','heavy_sequence_alignment','heavy_germline_alignment','heavy_junction',
+                    'heavy_junction_aa','heavy_v_cigar','heavy_d_cigar','heavy_j_cigar','heavy_stop_codon','heavy_vj_in_frame','heavy_locus','heavy_junction_length','heavy_np1_length','heavy_np2_length',
+                    'heavy_v_sequence_start','heavy_v_sequence_end','heavy_v_germline_start','heavy_v_germline_end','heavy_d_sequence_start','heavy_d_sequence_end','heavy_d_germline_start',
+                    'heavy_d_germline_end','heavy_j_sequence_start','heavy_j_sequence_end','heavy_j_germline_start','heavy_j_germline_end','heavy_v_score','heavy_v_identity','heavy_v_support',
+                    'heavy_d_score','heavy_d_identity','heavy_d_support','heavy_j_score','heavy_j_identity','heavy_j_support','heavy_fwr1','heavy_fwr2','heavy_fwr3','heavy_fwr4','heavy_cdr1',
+                    'heavy_cdr2','heavy_cdr3','heavy_cell_id','heavy_c_call','heavy_consensus_count','heavy_umi_count','heavy_v_call_10x','heavy_d_call_10x','heavy_j_call_10x','heavy_junction_10x',
+                    'heavy_junction_10x_aa','heavy_sample','heavy_contig','heavy_chain','heavy_v_gene','heavy_d_gene','heavy_j_gene','heavy_v_family','heavy_mut_count_v','heavy_mut_freq_v', 'sample.x','sample.y',
+                    'cell_id','light_sequence_id','light_sequence','light_rev_comp','light_productive','light_v_call','light_d_call','light_j_call','light_sequence_alignment','light_germline_alignment',
+                    'light_junction','light_junction_aa','light_v_cigar','light_d_cigar','light_j_cigar','light_stop_codon','light_vj_in_frame','light_locus','light_junction_length','light_np1_length',
+                    'light_np2_length','light_v_sequence_start','light_v_sequence_end','light_v_germline_start','light_v_germline_end','light_d_sequence_start','light_d_sequence_end','light_d_germline_start',
+                    'light_d_germline_end','light_j_sequence_start','light_j_sequence_end','light_j_germline_start','light_j_germline_end','light_v_score','light_v_identity','light_v_support',
+                    'light_d_score','light_d_identity','light_d_support','light_j_score','light_j_identity','light_j_support','light_fwr1','light_fwr2','light_fwr3','light_fwr4','light_cdr1','light_cdr2',
+                    'light_cdr3','light_cell_id','light_c_call','light_consensus_count','light_umi_count','light_v_call_10x','light_d_call_10x','light_j_call_10x','light_junction_10x','light_junction_10x_aa',
+                    'light_sample','light_contig','light_chain','light_v_gene','light_d_gene','light_j_gene','light_v_family','light_mut_count_v','light_mut_freq_v')
+```
+
+```{r}
+for(i in cols_to_remove) {
+  ra_gex[[i]] <- NULL
+}
+```
+
+```{r}
+ra_gex <- all.merge
+```
+
+```{r}
+saveRDS(ra_gex, "ra_gex.rds")
+```
+
+
+
+```{r}
+library(readr)
+bcr_info <-read_csv("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/bcr/NEW BCR/all_df_both_paired_new_2.csv")
+
+head(bcr_info)
+```
+
+```{r}
+
+for (i in 1:length(bcr_info$cell_id)){
+  if(bcr_info$heavy_sample[i] == '1'){
+  bcr_info$cell_id[i] <- paste0('1_', bcr_info$cell_id[i])
+  } else if(bcr_info$heavy_sample[i] == '2'){
+  bcr_info$cell_id[i] <- paste0('2_', bcr_info$cell_id[i])
+  } else if(bcr_info$heavy_sample[i] == '3'){
+  bcr_info$cell_id[i] <- paste0('3_', bcr_info$cell_id[i])
+}}
+```
+
+```{r}
+cell_id <- all.merge@assays[["RNA"]]@counts@Dimnames[[2]]
+sample <- all.merge@meta.data[["orig.ident"]]
+
+df <- data.frame(cell_id, sample)
+
+head(df)
+```
+
+```{r}
+final_df <- merge(x = df, y = bcr_info,  by = c('cell_id'), all.x = TRUE)
+
+rownames(final_df) <- final_df[,1]
+
+head(final_df)
+```
+
+```{r}
+all.merge <- AddMetaData(object=all.merge, metadata=final_df)
+```
+
+
+```{r}
+write.csv(colvec, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/bcr/NEW BCR/clones/trees/annotated_umap/colvec.csv")
+```
+
+```{r}
+with_bcr_sce <-as.SingleCellExperiment(with_bcr)
+#adjust cluster colours to match Seurat
+seurat_colours <- c("#ED68ED", "#ABA300","#00BFC4", "#FF61CC", "#0CB702", "#00A9FF", "#00C19A", "#00B8E7", "#E68613", "#F8766D", "#7CAE00", "#C77CFF")
+clus <- with_bcr_sce@colData@listData[["clusters"]]
+colvec <- seurat_colours[factor(clus)]
+```
+
+```{r}
+Idents(all.merge) <- "light_locus"
+
+p_light_chain <- DimPlot(all.merge, reduction = "umap", label = FALSE) + ggtitle("Light Chain")
+p_light_chain
+```
+
+
+
+```{r}
+pdf("./figures/umap_light_chain.pdf", width = 8.5, height = 5.5)
+p_light_chain
+dev.off()
+```
+
+2_TGCGGGTAGCGTTGCC-1
+2_GTGCGGTTCTCTTATG-1
+2_CCGTACTCAGTACACT-1
+2_CCACCTACATACAGCT-1
+2_AGCCTAACAACGCACC-1
+2_ACCGTAACAAAGCGGT-1
+
+```{r, fig.width=5, fig.height=4}
+#Idents(all.merge) <- "heavy_c_call"
+cells <-c('2_TGCGGGTAGCGTTGCC-1', '2_GTGCGGTTCTCTTATG-1', '2_CCGTACTCAGTACACT-1', '2_CCACCTACATACAGCT-1', '2_AGCCTAACAACGCACC-1', '2_ACCGTAACAAAGCGGT-1')
+
+p_c_call <- DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size=1, cells.highlight = cells) + ggtitle("Clone 250")
+p_c_call
+```
+
+```{r}
+pdf("./figures/clone250_umap.pdf", width = 8.5, height = 5.5)
+p_c_call
+dev.off()
+```
+
+
+```{r, fig.width=5, fig.height=4}
+#Idents(all.merge) <- "heavy_c_call"
+cells <-c('2_TTTGTCATCGTTGACA-1','2_TTTATGCGTTCGCGAC-1','2_TTGGCAAAGAACTGTA-1','2_TTGAACGTCCGGCACA-1','2_TTCTTAGGTATATGAG-1','2_TTCTCCTCAAGCTGGA-1','2_TTCGAAGCATCGGGTC-1','','2_TTCGAAGAGTGGTAGC-1','2_TTAGGCAGTTGCGCAC-1',
+          '2_TTAACTCAGGTGCACA-1','2_TGTGGTACAGCCTGTG-1','2_TGGTTAGTCCGCGCAA-1','2_TGGGCGTTCGGCTACG-1','2_TGGGAAGGTGGTGTAG-1','2_TGGACGCAGATGTAAC-1','2_TGCGTGGTCATGGTCA-1','2_TGCGTGGGTACCCAAT-1','2_TGCGGGTGTCATATCG-1',
+          '2_TGCGGGTGTATAGGGC-1','2_TGCGGGTCAGGTGCCT-1','2_TGCCAAAGTGTGAATA-1','2_TGAGCATGTTAAGACA-1','2_TGAGCATCACGTCTCT-1','2_TGAGAGGCAGTCAGAG-1','2_TGACAACTCGAGAACG-1','2_TCTTTCCGTTACGTCA-1','2_TCTTCGGCACCTGGTG-1',
+          '2_TCGGGACTCTGGAGCC-1','2_TCCACACTCATGTGGT-1','2_TCAGGTAAGCTACCGC-1','2_TCACAAGCATTTGCCC-1','2_TCACAAGCAATCAGAA-1','2_TATCTCAAGACGACGT-1','2_TAGCCGGGTAAAGGAG-1','2_TAGACCAAGCGTAGTG-1','2_TACTTGTCAGCGTCCA-1',
+          '2_TACTCATCACAGACAG-1','2_TACCTTATCACGCGGT-1','2_TAAGCGTGTCTAGTGT-1','2_TAAGAGACACTGTCGG-1','2_GTTCTCGAGCCAACAG-1','2_GTTCGGGGTCTGATCA-1','2_GTTAAGCCAGTGAGTG-1','2_GTGAAGGTCACTGGGC-1','2_GTCTTCGAGTCTTGCA-1',
+          '2_GTCATTTGTGACAAAT-1','2_GTCAAGTTCTGAGGGA-1','2_GTAGGCCGTATAGGGC-1','2_GTACTTTCAGGATCGA-1','2_GGCCGATCAGGTTTCA-1','2_GGCAATTGTCTTCGTC-1','2_GCTGCAGAGTTGAGAT-1','2_GCTCTGTCATTTCACT-1','2_GCGCGATGTACATGTC-1',
+          '2_GCGCCAAGTCTAGAGG-1','2_GCCTCTAAGGCTCTTA-1','2_GACTACAGTACTCAAC-1','2_GACGTTAGTCCAGTTA-1','2_GACGTGCCATGCAACT-1','2_GACGGCTGTTGTCGCG-1','2_GACCTGGCATGTCCTC-1','2_GACAGAGTCATTGCCC-1','2_GAAGCAGTCGCAAGCC-1',
+          '2_GAACCTACAATCGGTT-1','2_CTCGAAACAAGCTGTT-1','2_CTCATTAGTCAACTGT-1','2_CTCAGAATCTATGTGG-1','2_CTAGAGTAGGTCGGAT-1','2_CTACATTCATCGGACC-1','2_CTACACCAGGAGCGTT-1','2_CGTCACTGTCAGAATA-1','2_CGGAGCTAGTTAGCGG-1',
+          '2_CGGACGTCATTCACTT-1','2_CGCTGGATCTACTCAT-1','2_CGCGGTACAAGTTCTG-1','2_CGATTGACAGCATACT-1','2_CGAGCACTCATAGCAC-1','2_CGAGAAGTCTGGTTCC-1','2_CCTTTCTAGGCACATG-1','2_CCTTTCTAGCATGGCA-1','2_CCTACCATCTGTACGA-1',
+          '2_CCTAAAGGTATAATGG-1','2_CCGTACTGTAACGACG-1','2_CCGGTAGTCAAGGTAA-1','2_CCCAATCTCATGTGGT-1','2_CCCAATCCAGCAGTTT-1','2_CCACGGATCTTGTCAT-1','2_CATTCGCTCTTGTATC-1','2_CATTCGCAGCTAAACA-1','2_CATGCCTCAAGCGCTC-1',
+          '2_CATCAGAGTTGATTGC-1','2_CAGCTAACACCGATAT-1','2_CAGCTAAAGGAGCGTT-1','2_CAGATCAGTGATGTGG-1','2_CAGATCAAGCTAGTTC-1','2_CACAGGCTCTTGACGA-1','2_CACACCTAGTCGAGTG-1','2_CACAAACCATACAGCT-1','2_ATTTCTGTCAGGATCT-1',
+          '2_ATTGGACCACGGTAAG-1','2_ATGTGTGAGATCTGCT-1','2_ATGGGAGCACAGAGGT-1','2_ATGCGATAGAGCAATT-1','2_ATGAGGGGTTCACCTC-1','2_ATCTGCCTCCGGGTGT-1','2_AGTGTCACACGGCGTT-1','2_AGTCTTTGTGAACCTT-1','2_AGGTCCGTCTGTCTCG-1',
+          '2_AGGGAGTAGATGAGAG-1','2_AGGCCACGTCAAGCGA-1','2_AGCGTATGTGTCGCTG-1','2_AGACGTTCATTTCACT-1','2_AGACGTTAGGCCCTTG-1','2_ACTTACTTCCGTAGTA-1','2_ACTGCTCGTTAAAGTG-1','2_ACTGATGCAGCAGTTT-1','2_ACTGAGTGTATAGGGC-1',
+          '2_ACTGAGTAGGGTATCG-1','2_ACGATGTGTACCCAAT-1','2_ACCCACTAGTACGACG-1','2_ACCAGTACAGCGTCCA-1','2_AATCCAGGTGAAAGAG-1','2_AACTGGTGTCCAACTA-1','2_AACCGCGGTCTTGATG-1','2_AAAGATGAGTTGTCGT-1','2_AAACGGGTCAACGGCC-1',
+          '2_AAACCTGGTCGAACAG-1','2_TCCACACAGAGCCCAA-1','2_CGGACTGGTAAGGGAA-1','2_CCACTACTCGTGGACC-1','2_ATAAGAGGTTCCGTCT-1','2_ATAACGCGTTGAACTC-1','2_AACTGGTGTCGACTGC-1','2_GTACGTATCTTGCCGT-1','2_CAGCAGCTCTGTACGA-1')
+
+p_c_call <- DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size=1, cells.highlight = cells) + ggtitle("Clone 176")
+p_c_call
+```
+
+
+```{r, fig.width=8, fig.height=6}
+Idents(all.merge) <- "orig.ident"
+
+p_orig <- DimPlot(all.merge, reduction = "umap", label = FALSE) + ggtitle("Sample")
+p_orig
+```
+
+```{r, fig.height = 10, fig.width = 15}
+labelled_umap + p_orig +  p_c_call  + p_light_chain + plot_layout(ncol = 2)
+```
+
+
+
+
+
+```{r}
+Idents(all.merge) <- "heavy_mut_freq_v"
+
+p_mut_freq <- FeaturePlot(all.merge, reduction = "umap", label = FALSE, features = "heavy_mut_freq_v", cols = c("lightgrey", "#2166AC"), pt.size = 0.3) + ggtitle("Mutation frequency (IgH V gene)")
+
+p_mut_freq 
+```
+
+
+```{r}
+p_c_call + p3
+```
+
+```{r, fig.width = 15, fig.height = 6}
+Idents(all.merge) <- "heavy_c_call"
+
+p_c_call_split <- DimPlot(all.merge, reduction = "umap", label = FALSE, split.by = 'orig.ident')
+p_c_call_split
+```
+
+```{r}
+with_bcr <- subset(all.merge, subset = heavy_locus == "IGH")
+```
+
+```{r}
+Idents(with_bcr) <- "heavy_c_call"
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c("IGHM", "IGHD", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4"))
+
+p_c_call_bcr <- DimPlot(with_bcr, reduction = "umap", label = FALSE)
+p_c_call_bcr
+```
+cols = c("beige", "#009DFF"),
+```{r}
+Idents(with_bcr) <- "heavy_mut_freq_v"
+
+p_mut_freq_bcr <- FeaturePlot(with_bcr, reduction = "umap", label = FALSE, features = "heavy_mut_count_v",  pt.size = 0.3) 
+
+p_mut_freq_bcr & scale_color_viridis(option="A", direction=-1)
+```
+
+```{r}
+Idents(with_bcr) <- "heavy_mut_freq_v"
+
+p_mut_freq_bcr <- FeaturePlot(with_bcr, reduction = "umap", label = FALSE, features = "heavy_mut_count_v", cols=c("#FEFBBD", "#4C00B0"),  pt.size = 0.6) 
+
+p_mut_freq_bcr 
+```
+
+```{r}
+pdf("mut_count_umap.pdf", width=8.5, height=5.5)
+p_mut_freq_bcr 
+dev.off()
+```
+
+
+```{r, fig.width=6, fig.height=3}
+v_factor_levels <- c(">5", "<5", "Germline")
+ggplot(with_bcr@meta.data, aes(x=clusters, fill=factor(mut_count, levels = v_factor_levels))) + 
+    geom_bar(position="fill", width=0.7) + 
+    ggtitle("Mutation Count") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=c("#551A8B", "#B098A4", "#FEFBBD"))
+```
+
+```{r}
+pdf("mut_count_bar.pdf", height=5, width=10)
+v_factor_levels <- c(">5", "<5", "Germline")
+ggplot(with_bcr@meta.data, aes(x=clusters, fill=factor(mut_count, levels = v_factor_levels))) + 
+    geom_bar(position="fill", width=0.7) + 
+    ggtitle("Mutation Count") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=c("#551A8B", "#B098A4", "#FEFBBD"))
+dev.off()
+```
+
+
+```{r}
+table(with_bcr@meta.data$mut_count, with_bcr@meta.data$clusters)
+```
+
+
+```{r}
+write.csv(with_bcr[[]], "bcr_and_seurat_2.csv")
+```
+
+
+
+```{r}
+with_bcr@meta.data[["heavy_mut_rate"]] <- NA
+
+for (i in 1:length(with_bcr@meta.data[["heavy_mut_freq_v"]])){
+  if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] > 0.15){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('>15%')
+  } else if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] > 0.10 & with_bcr@meta.data[["heavy_mut_freq_v"]][i] < 0.15){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('10-15%')
+  } else if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] > 0.05 & with_bcr@meta.data[["heavy_mut_freq_v"]][i] < 0.10){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('5-10%')
+  } else if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] > 0.01 & with_bcr@meta.data[["heavy_mut_freq_v"]][i] < 0.05){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('1-5%')
+  } else if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] > 0.000000000000001 & with_bcr@meta.data[["heavy_mut_freq_v"]][i] < 0.01){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('<1%')
+  } else if(with_bcr@meta.data[["heavy_mut_freq_v"]][i] == 0){
+  with_bcr@meta.data[["heavy_mut_rate"]][i] <- paste0('Germline')
+  }else { paste0(NA)}}
+```
+
+
+```{r}
+with_bcr@meta.data[["mut_count"]] <- NA
+
+for (i in 1:length(with_bcr@meta.data[["heavy_mut_count_v"]])){
+  if(with_bcr@meta.data[["heavy_mut_count_v"]][i] >= 5){
+  with_bcr@meta.data[["mut_count"]][i] <- paste0('>5')
+  } else if(with_bcr@meta.data[["heavy_mut_count_v"]][i] >= 1 & with_bcr@meta.data[["heavy_mut_count_v"]][i] < 5){
+  with_bcr@meta.data[["mut_count"]][i] <- paste0('<5')
+  } else if(with_bcr@meta.data[["heavy_mut_count_v"]][i] == 0){
+  with_bcr@meta.data[["mut_count"]][i] <- paste0('Germline')
+  } else { paste0(NA)}}
+```
+
+, cols = cud(1:6, shift = FALSE)
+
+```{r}
+library(oneclust)
+Idents(with_bcr) <- "heavy_mut_rate"
+
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c(">15%", "10-15%", "5-10%","1-5%", "<1%", "Germline"))
+
+DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size = 0.3) + ggtitle("Mutation Frequency (Heavy Chain)")
+```
+
+```{r}
+pdf("./figures/shm_rate_umap2.pdf", width = 8.5, height = 5.5)
+Idents(with_bcr) <- "heavy_mut_rate"
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c(">15%", "10-15%", "5-10%","1-5%", "<1%", "Germline"))
+DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size = 0.9) + ggtitle("Mutation Frequency (Heavy Chain)")
+dev.off()
+```
+
+```{r, fig.width=10, fig.height=5}
+v_factor_levels <- c(">15%", "10-15%", "5-10%","1-5%", "<1%", "Germline")
+ggplot(with_bcr@meta.data, aes(x=clusters, fill=factor(heavy_mut_rate, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Mutation Rate") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+pdf("./figures/shm_rate_barplot2.pdf", width = 10, height = 5)
+v_factor_levels <- c(">15%", "10-15%", "5-10%","1-5%", "<1%", "Germline")
+ggplot(with_bcr@meta.data, aes(x=clusters, fill=factor(heavy_mut_rate, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7) + 
+    ggtitle("Mutation Rate") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+dev.off()
+```
+
+```{r}
+Idents(with_bcr) <- "heavy_c_call"
+with_bcr@active.ident <- factor(with_bcr@active.ident, 
+                            levels=c("IGHD", "IGHM", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4"))
+
+DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size = 0.9) + ggtitle("Isotype")
+```
+
+```{r}
+pdf("isotype_umap.pdf", width=8.5, height=5.5)
+DimPlot(with_bcr, reduction = "umap", label = FALSE, pt.size = 0.9) 
+dev.off()
+```
+
+
+```{r, fig.width=10, fig.height=5}
+bcr_meta <- with_bcr@meta.data
+
+bcr_meta <- bcr_meta %>% drop_na(heavy_c_call)
+
+v_factor_levels <- c("IGHD", "IGHM", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4")
+ggplot(bcr_meta, aes(x=clusters, fill=factor(heavy_c_call, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7, na.rm = TRUE) + 
+    ggtitle("Isotype") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+pdf("isotype_stacked_bar.pdf", width=10, height=5)
+v_factor_levels <- c("IGHD", "IGHM", "IGHA1","IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4")
+ggplot(bcr_meta, aes(x=clusters, fill=factor(heavy_c_call, levels = v_factor_levels))) + geom_bar(position="fill", width=0.7, na.rm = TRUE) + 
+    ggtitle("Isotype") + 
+    xlab("Cluster") + ylab("Proportion") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+dev.off()
+```
+
+
+
+
+Just DN2
+
+
+```{r}
+just_dn2 <- subset(all.merge, idents = "DN2")
+```
+
+```{r}
+DimPlot(just_dn2)
+```
+
+```{r}
+just_dn2 <- FindVariableFeatures(just_dn2, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(just_dn2)
+just_dn2 <- ScaleData(just_dn2, features = all.genes)
+just_dn2 <- RunPCA(just_dn2, features = VariableFeatures(object = just_dn2))
+```
+
+
+```{r}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(just_dn2), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(just_dn2)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+```
+
+```{r}
+igtcr.index <- grep(pattern = "IG[HKL][VDJ]|AC233755.1|IGH[GMDEA]|IGKC|IGLC|IGLL|TR[ABGD][CV]", x = VariableFeatures(just_dn2), value = FALSE) # Select row indices for Ig VDJ genes, Ig constant genes, and TCR genes 
+
+VariableFeatures(just_dn2) <- VariableFeatures(just_dn2)[-igtcr.index]
+```
+
+```{r}
+head(VariableFeatures(just_dn2))
+```
+
+```{r}
+just_dn2 <- JackStraw(just_dn2, num.replicate = 100)
+just_dn2 <- ScoreJackStraw(just_dn2, dims = 1:10)
+
+JackStrawPlot(just_dn2, dims = 1:10)
+ElbowPlot(just_dn2)
+```
+
+```{r}
+library(clustree)
+for(x in seq(0, 1.0, by=0.2)){
+    just_dn2 <- FindClusters(just_dn2, resolution = x)
+}
+```
+
+```{r, fig.width = 8, fig.height = 14}
+dn2_cluster_tree <- clustree(just_dn2, prefix = "RNA_snn_res.")
+
+dn2_cluster_tree
+```
+
+```{r}
+just_dn2 <- FindNeighbors(just_dn2, dims = 1:4)
+just_dn2 <- FindClusters(just_dn2, resolution = 0.05)
+just_dn2 <- RunUMAP(just_dn2, dims = 1:4)
+
+dn2_umap <- DimPlot(just_dn2, reduction = "umap")
+
+dn2_umap
+```
+
+
+```{r}
+saveRDS(just_dn2, "just_dn2.rds")
+```
+
+```{r}
+just_dn2 <- readRDS("just_dn2.rds")
+```
+
+
+```{r}
+pdf("./harmony_out/dn2_umap.pdf", width = 8.5, height = 5.5)
+dn2_umap
+dev.off()
+```
+
+```{r}
+FeaturePlot(just_dn2, features = "IL2RG")
+```
+
+```{r, fig.width=8, fig.height=6}
+FeaturePlot(just_dn2, features = c("MS4A1","ITGAX", "FCRL5", "JCHAIN", "IGHG1", "IGHM", "IGHA1", "HLA-DQA2", "SEPT7"))
+```
+
+```{r, fig.width=10, fig.height=4}
+FeaturePlot(just_dn2, features = c("JCHAIN", "HLA-DQA2"))
+```
+
+```{r}
+pdf("./harmony_out/dn2_expression_umap.pdf", width = 10, height = 4)
+FeaturePlot(just_dn2, features = c("JCHAIN", "HLA-DQA2"))
+dev.off()
+```
+
+```{r}
+dn2_cluster_markers <- FindAllMarkers(just_dn2, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+```{r}
+dn2_cluster_markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+```
+
+```{r, fig.width = 18, fig.height = 12}
+mapal <- colorRampPalette(RColorBrewer::brewer.pal(11,"RdBu"))(256)
+
+dn2_cluster_markers %>%
+    group_by(cluster) %>%
+    top_n(n = 15, wt = avg_log2FC) -> dn2top30
+
+
+
+dn2_heatmap <- DoHeatmap(just_dn2,
+          features = dn2top30$gene,
+          size = 15)+
+  scale_fill_gradientn(colours = rev(mapal)) 
+
+dn2_heatmap
+```
+
+```{r}
+png("./figures/dn2_heatmap15.png", width = 1300, height = 900)
+dn2_heatmap
+dev.off()
+```
+
+```{r}
+dn2_dotplot <- DotPlot(just_dn2, features = c("MS4A1","ITGAX", "FCRL5", "JCHAIN", "IGHG1", "IGHM", "IGHA1", "HLA-DQA2", "SEPT7"), cols = "RdYlBu", col.min = -1, col.max = 2.5) + RotatedAxis() 
+
+dn2_dotplot
+```
+
+
+
+
+
+```{r}
+Idents(just_dn2) <- "heavy_c_call"
+
+DimPlot(just_dn2, reduction = "umap")
+```
+
+```{r}
+#DN2 vs all other cells
+dn2.1_vs_dn2.0 <- FindMarkers(just_dn2, ident.1 = "1", ident.2 = "0", test.use = "MAST", only.pos = FALSE)
+
+write.csv(dn2.1_vs_dn2.0, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/dn2.1_vs_dn2.0.csv", row.names = TRUE)
+```
+
+```{r, fig.height = 8, fig.width = 8}
+dn2.0_vs_dn2.1_volc <- EnhancedVolcano(dn2.0_vs_dn2.1,
+    lab = rownames(dn2.0_vs_dn2.1),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    drawConnectors = TRUE,
+    widthConnectors = 0.75)
+
+dn2.0_vs_dn2.1_volc
+```
+
+```{r}
+#DN2 vs all other cells
+dn2_0 <- FindMarkers(just_dn2, ident.1 = "0", test.use = "MAST", only.pos = FALSE)
+
+write.csv(dn2_0, "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/fgsea/ranks/dn2_0.csv", row.names = TRUE)
+```
+
+
+```{r}
+library(SeuratDisk)
+
+SaveH5Seurat(just_dn2, filename = "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/velocity/just_dn2.h5Seurat")
+Convert("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/velocity/just_dn2.h5Seurat", dest = "h5ad")
+```
+
+
+
+
+
+
+
+
+Just DN2 and ASC
+
+
+```{r}
+dn2_asc <- subset(all.merge, idents = c("DN2", "ASC 1", "ASC 2", "ASC 3"))
+```
+
+```{r}
+DimPlot(dn2_asc)
+```
+
+
+```{r}
+dn2_asc <- FindVariableFeatures(dn2_asc, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(dn2_asc)
+dn2_asc <- ScaleData(dn2_asc, features = all.genes)
+dn2_asc <- RunPCA(dn2_asc, features = VariableFeatures(object = dn2_asc))
+```
+
+
+```{r}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(dn2_asc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(dn2_asc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+```
+
+
+```{r}
+igtcr.index <- grep(pattern = "IG[HKL][VDJ]|AC233755.1|IGH[GMDEA]|IGKC|IGLC|IGLL|TR[ABGD][CV]", x = VariableFeatures(dn2_asc), value = FALSE) # Select row indices for Ig VDJ genes, Ig constant genes, and TCR genes 
+
+VariableFeatures(dn2_asc) <- VariableFeatures(dn2_asc)[-igtcr.index]
+```
+
+```{r}
+head(VariableFeatures(dn2_asc))
+```
+
+```{r}
+dn2_asc <- FindNeighbors(dn2_asc, dims = 1:4)
+dn2_asc <- FindClusters(dn2_asc, resolution = 0.2)
+dn2_asc <- RunUMAP(dn2_asc, dims = 1:4)
+
+Idents(dn2_asc) <- "RNA_snn_res.0.2"
+
+dn2_asc <- RenameIdents(dn2_asc, `0` = "ASC 2", `1` = "ASC 2", `2` = "ASC 3", `3` = "DN2-0", `4` = "DN2-1", `5` = "ASC 1")
+
+dn2_umap <- DimPlot(dn2_asc, reduction = "umap")
+
+dn2_umap
+```
+
+```{r, fig.width=8, fig.height=6}
+FeaturePlot(dn2_asc, features = c("MS4A1","ITGAX", "JCHAIN","HLA-DQA2"))
+```
+
+```{r, fig.width=8, fig.height=6}
+DimPlot(dn2_asc, group.by = "new_clusters")
+```
+
+```{r}
+pdf("./figures/dn2_asc_expression_umap.pdf", width = 8, height = 6)
+FeaturePlot(dn2_asc, features = c("MS4A1","ITGAX", "JCHAIN","HLA-DQA2"))
+dev.off()
+```
+
+
+```{r, fig.width=8, fig.height=6}
+DimPlot(dn2_asc, group.by = "orig.ident")
+```
+
+
+```{r}
+saveRDS(dn2_asc, "dn2_asc.rds")
+```
+
+```{r}
+library(SeuratDisk)
+
+SaveH5Seurat(dn2_asc, filename = "~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/velocity/dn2_asc.h5Seurat")
+Convert("~/Documents/Edinburgh/Year 2/scRNA_seq/analysis/velocity/dn2_asc.h5Seurat", dest = "h5ad")
+```
+
+
+
