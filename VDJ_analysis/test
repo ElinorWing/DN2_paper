@@ -1,9 +1,0 @@
-
-
-
-plt.rcParams['figure.figsize'] = [15,10]
-
-plt.scatter(x, y, s=0.05, c=coldf.x)
-plt.plot([x_parent, x_child], [y_parent, y_child], ls='solid', lw=0.3, color='black')
-plt.show()
-
